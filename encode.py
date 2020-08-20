@@ -4,8 +4,8 @@ import json
 import logging
 import os
 import sys
-from tqdm import tqdm
 import torch
+from tqdm import tqdm
 from transformers import BertJapaneseTokenizer
 
 #Set up a logger.
