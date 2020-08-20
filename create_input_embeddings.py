@@ -1,3 +1,5 @@
+#ディスク容量が不足するためこのコードは使用しない。
+
 import argparse
 import logging
 import os
