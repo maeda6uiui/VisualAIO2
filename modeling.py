@@ -9,7 +9,12 @@ import numpy as np
 from tqdm import tqdm
 from torch import nn,optim
 from torch.utils.data import Dataset,DataLoader,TensorDataset
-from transformers import BertModel,BertForMultipleChoice
+from transformers import (
+    BertModel,
+    BertForMultipleChoice,
+    AdamW,
+    get_linear_schedule_with_warmup,
+)
 
 import hashing
 
@@ -147,7 +152,7 @@ def create_inputs_embeds_and_token_type_ids(bert_model,input_ids,indices,options
 
     return inputs_embeds,inputs_token_type_ids
 
-def train(bert_model,bfmc_model,options,im_features_dir,optimizer,dataloader):
+def train(bert_model,bfmc_model,options,im_features_dir,optimizer,scheduler,dataloader):
     bert_model.eval()
     bfmc_model.train()
 
@@ -181,15 +186,15 @@ def train(bert_model,bfmc_model,options,im_features_dir,optimizer,dataloader):
         loss = outputs[0]
         # Backward propagation
         loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        nn.utils.clip_grad_norm_(bfmc_model.parameters(), 1.0)
         # Update parameters
         optimizer.step()
         scheduler.step()
 
-        model.zero_grad()
+        bfmc_model.zero_grad()
 
-        if step % log_interval == 0:
-            logger.info("Current step: {}\tLoss: {}".format(step,loss.item()))
+        if batch_idx % 10 == 0:
+            logger.info("Current step: {}\tLoss: {}".format(batch_idx,loss.item()))
 
 def simple_accuracy(preds, labels):
     """
@@ -216,7 +221,7 @@ def evaluate(bert_model,bfmc_model,options,im_features_dir,dataloader):
     eval_loss = 0.0
     nb_eval_steps = 0
     preds = None
-    correct_label_ids = None
+    correct_labels = None
 
     for batch_idx,batch in enumerate(dataloader):
         with torch.no_grad():
@@ -250,19 +255,19 @@ def evaluate(bert_model,bfmc_model,options,im_features_dir,dataloader):
 
         if preds is None:
             preds = logits.detach().cpu().numpy()
-            correct_label_ids = inputs["labels"].detach().cpu().numpy()
+            correct_labels = inputs["labels"].detach().cpu().numpy()
         else:
             preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-            correct_label_ids = np.append(
-                correct_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0
+            correct_labels = np.append(
+                correct_labels, inputs["labels"].detach().cpu().numpy(), axis=0
             )
 
     eval_loss = eval_loss / nb_eval_steps
     pred_labels = np.argmax(preds, axis=1)
 
-    accuracy = simple_accuracy(pred_labels, correct_label_ids)
+    accuracy = simple_accuracy(pred_labels, correct_labels)
 
-    return pred_labels,correct_label_ids,accuracy
+    return pred_labels,correct_labels,accuracy
 
 def main(batch_size,num_epochs,lr,train_input_dir,dev1_input_dir,im_features_dir,result_save_dir):
     logger.info("batch_size: {} num_epochs: {}".format(batch_size,num_epochs))
@@ -290,8 +295,12 @@ def main(batch_size,num_epochs,lr,train_input_dir,dev1_input_dir,im_features_dir
     bfmc_model=BertForMultipleChoice.from_pretrained("cl-tohoku/bert-base-japanese-whole-word-masking")
     bfmc_model.to(device)
 
-    #Create an optimizer.
-    optimizer=optim.Adam(bfmc_model.parameters(),lr=lr,eps=1e-8)
+    #Create an optimizer and a scheduler.
+    optimizer=AdamW(bfmc_model.parameters(),lr=lr,eps=1e-8)
+    total_steps = len(train_dataloader) * num_epochs
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer, num_warmup_steps=0, num_training_steps=total_steps
+    )
 
     #Create a directory to save the results in.
     os.makedirs(result_save_dir,exist_ok=True)
@@ -300,8 +309,8 @@ def main(batch_size,num_epochs,lr,train_input_dir,dev1_input_dir,im_features_dir
     for epoch in range(num_epochs):
         logger.info("===== Epoch {}/{} =====".format(epoch+1,num_epochs))
 
-        train(bert_model,bfmc_model,train_options,im_features_dir,optimizer,train_dataloader)
-        pred_labels,correct_label_ids,accuracy=evaluate(bert_model,bfmc_model,options,im_features,dev1_dataloader)
+        train(bert_model,bfmc_model,train_options,im_features_dir,optimizer,scheduler,train_dataloader)
+        pred_labels,correct_labels,accuracy=evaluate(bert_model,bfmc_model,dev1_options,im_features_dir,dev1_dataloader)
 
         #Save model parameters.
         checkpoint_filepath=os.path.join(result_save_dir,"checkpoint_{}.pt".format(epoch+1))
@@ -315,8 +324,8 @@ def main(batch_size,num_epochs,lr,train_input_dir,dev1_input_dir,im_features_dir
             w.write("Accuracy: {}\n".format(accuracy))
 
         with open(labels_filepath,"w") as w:
-            for pred,correct in zip(pred_labels,correct_label_ids):
-                w.write("{} {}\n".format(pred_id,correct_label))
+            for pred_label,correct_label in zip(pred_labels,correct_labels):
+                w.write("{} {}\n".format(pred_label,correct_label))
 
     logger.info("Finished model training.")
 
