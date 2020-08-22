@@ -56,11 +56,11 @@ def load_options_list(filepath):
 
     return options
 
-def create_dataloader(input_dir,batch_size,shuffle=True,drop_last=True):
-    input_ids=torch.load(os.path.join(input_dir,"input_ids.pt"))
-    attention_mask=torch.load(os.path.join(input_dir,"attention_mask.pt"))
-    token_type_ids=torch.load(os.path.join(input_dir,"token_type_ids.pt"))
-    labels=torch.load(os.path.join(input_dir,"labels.pt"))
+def create_dataloader(input_dir,batch_size,num_options=4,shuffle=True,drop_last=True):
+    input_ids=torch.load(os.path.join(input_dir,"input_ids.pt"))[:,:num_options,:]
+    attention_mask=torch.load(os.path.join(input_dir,"attention_mask.pt"))[:,:num_options,:]
+    token_type_ids=torch.load(os.path.join(input_dir,"token_type_ids.pt"))[:,:num_options,:]
+    labels=torch.load(os.path.join(input_dir,"labels.pt"))[:]
     indices=torch.empty(input_ids.size()[0],dtype=torch.long)
     for i in range(input_ids.size()[0]):
         indices[i]=i
@@ -76,16 +76,18 @@ def create_text_embeddings(bert_model,options_ids):
 
     Args:
         bert_model (transformers.BertModel): BERT model
-        options_ids (torch.tensor (20,512)): Encoded text
+        options_ids (torch.tensor (x,512)): Encoded text
 
     Returns:
-        torch.tensor (20,512,768): Text embeddings
+        torch.tensor (x,512,768): Text embeddings
     """
     bert_model.eval()
 
-    ret=torch.empty(20,512,768).to(device)
+    num_options=options_ids.size()[0]
 
-    for i in range(20):
+    ret=torch.empty(num_options,512,768).to(device)
+
+    for i in range(num_options):
         input_ids=options_ids[i].unsqueeze(0).to(device)
         
         with torch.no_grad():
@@ -120,15 +122,16 @@ def create_option_embedding(text_embedding,im_embedding):
 
 def create_inputs_embeds_and_token_type_ids(bert_model,input_ids,indices,options,im_features_dir):
     batch_size=input_ids.size()[0]
+    num_options=input_ids.size()[1]
 
-    inputs_embeds=torch.empty(batch_size,20,512,768).to(device)
-    inputs_token_type_ids=torch.empty(batch_size,20,512,dtype=torch.long).to(device)
+    inputs_embeds=torch.empty(batch_size,num_options,512,768).to(device)
+    inputs_token_type_ids=torch.empty(batch_size,num_options,512,dtype=torch.long).to(device)
 
     for i in range(batch_size):
         text_embeddings=create_text_embeddings(bert_model,input_ids[i])
 
         ops=options[indices[i]]
-        for j in range(20):
+        for j in range(num_options):
             article_name=ops.get(j)
             article_hash=hashing.get_md5_hash(article_name)
 
@@ -193,7 +196,7 @@ def train(bert_model,bfmc_model,options,im_features_dir,optimizer,scheduler,data
 
         bfmc_model.zero_grad()
 
-        if batch_idx % 10 == 0:
+        if batch_idx % 100 == 0:
             logger.info("Current step: {}\tLoss: {}".format(batch_idx,loss.item()))
 
 def simple_accuracy(preds, labels):
@@ -270,7 +273,7 @@ def evaluate(bert_model,bfmc_model,options,im_features_dir,dataloader):
     return pred_labels,correct_labels,accuracy
 
 def main(batch_size,num_epochs,lr,train_input_dir,dev1_input_dir,im_features_dir,result_save_dir):
-    logger.info("batch_size: {} num_epochs: {}".format(batch_size,num_epochs))
+    logger.info("batch_size: {} num_epochs: {} lr: {}".format(batch_size,num_epochs,lr))
 
     #Load lists of options.
     logger.info("Load lists of options.")
@@ -280,10 +283,10 @@ def main(batch_size,num_epochs,lr,train_input_dir,dev1_input_dir,im_features_dir
 
     #Create dataloaders.
     logger.info("Create a training dataloader from {}.".format(train_input_dir))
-    train_dataloader=create_dataloader(train_input_dir,batch_size,shuffle=True,drop_last=True)
+    train_dataloader=create_dataloader(train_input_dir,batch_size,num_options=4,shuffle=True,drop_last=True)
 
     logger.info("Create a dev1 dataloader from {}.".format(dev1_input_dir))
-    dev1_dataloader=create_dataloader(dev1_input_dir,4,shuffle=False,drop_last=False)
+    dev1_dataloader=create_dataloader(dev1_input_dir,4,num_options=20,shuffle=False,drop_last=False)
 
     #Load a pre-trained BERT model.
     logger.info("Load a pre-trained BERT model.")
