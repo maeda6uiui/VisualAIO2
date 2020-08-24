@@ -315,13 +315,15 @@ def main(batch_size,num_epochs,lr,train_input_dir,dev1_input_dir,im_features_dir
         train(bert_model,bfmc_model,train_options,im_features_dir,optimizer,scheduler,train_dataloader)
         pred_labels,correct_labels,accuracy=evaluate(bert_model,bfmc_model,dev1_options,im_features_dir,dev1_dataloader)
 
+        logger.info("Accuracy: {}".format(accuracy))
+
         #Save model parameters.
         checkpoint_filepath=os.path.join(result_save_dir,"checkpoint_{}.pt".format(epoch+1))
         torch.save(bfmc_model.state_dict(),checkpoint_filepath)
 
         #Save results as text files.
-        res_filepath=os.path.join(result_save_dir,"result_{}.txt".format(epoch+1))
-        labels_filepath=os.path.join(result_save_dir,"labels_{}.txt".format(epoch+1))
+        res_filepath=os.path.join(result_save_dir,"result_eval_{}.txt".format(epoch+1))
+        labels_filepath=os.path.join(result_save_dir,"labels_eval_{}.txt".format(epoch+1))
 
         with open(res_filepath,"w") as w:
             w.write("Accuracy: {}\n".format(accuracy))
